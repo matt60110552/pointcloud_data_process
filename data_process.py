@@ -1,9 +1,11 @@
 import os
+import sys
 import numpy as np
 import itertools
 import math
 import random
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 from os import path as Path
@@ -13,13 +15,11 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
 random.seed = 42
+sys.path.insert(1, "/home/user/point_transformer/lib")
+from pointops.functions import pointops
 
-path = os.path.abspath("/home/user/point_transformer/model/pointtransformer/archive/ModelNet40")
-
-# folders = [dir for dir in sorted(os.listdir(path)) if os.path.isdir(path/dir)]
-folders = [dir for dir in sorted(os.listdir(path)) if os.path.isdir(path)]
-classes = {folder: i for i, folder in enumerate(folders)}
-# print(classes)
+######################
+# data process begin #
 
 
 def read_off(file):
@@ -33,66 +33,6 @@ def read_off(file):
     return verts, faces
 
 
-# def visualize_rotate(data):
-#     x_eye, y_eye, z_eye = 1.25, 1.25, 0.8
-#     frames=[]
-
-#     def rotate_z(x, y, z, theta):
-#         w = x+1j*y
-#         return np.real(np.exp(1j*theta)*w), np.imag(np.exp(1j*theta)*w), z
-
-#     for t in np.arange(0, 10.26, 0.1):
-#         xe, ye, ze = rotate_z(x_eye, y_eye, z_eye, -t)
-#         frames.append(dict(layout=dict(scene=dict(camera=dict(eye=dict(x=xe, y=ye, z=ze))))))
-#     print("?")
-#     fig = go.Figure(data=data,
-#         layout=go.Layout(
-#             updatemenus=[dict(type='buttons',
-#                 showactive=False,
-#                 y=1,
-#                 x=0.8,
-#                 xanchor='left',
-#                 yanchor='bottom',
-#                 pad=dict(t=45, r=10),
-#                 buttons=[dict(label='Play',
-#                     method='animate',
-#                     args=[None, dict(frame=dict(duration=50, redraw=True),
-#                         transition=dict(duration=0),
-#                         fromcurrent=True,
-#                         mode='immediate'
-#                         )]
-#                     )
-#                 ])]
-#         ),
-#         frames=frames
-#     )
-
-#     return fig
-
-
-# def pcshow(xs,ys,zs):
-#     data=[go.Scatter3d(x=xs, y=ys, z=zs,
-#                                    mode='markers')]
-#     fig = visualize_rotate(data)
-#     fig.update_traces(marker=dict(size=2,
-#                       line=dict(width=2,
-#                       color='DarkSlateGrey')),
-#                       selector=dict(mode='markers'))
-#     fig.show()
-
-
-# with open(path/"airplane/train/airplane_0001.off", 'r') as f:
-with open(path + "/airplane/train/airplane_0001.off", 'r') as f:
-    verts, faces = read_off(f)
-  
-i, j, k = np.array(faces).T
-x, y, z = np.array(verts).T
-print(len(x))
-
-# visualize_rotate([go.Mesh3d(x=x, y=y, z=z, color='yellowgreen', opacity=0.50, i=i, j=j, k=k)]).show()
-# visualize_rotate([go.Scatter3d(x=x, y=y, z=z, mode='markers')]).show()
-
-
 class PointSampler(object):
     def __init__(self, output_size):
         assert isinstance(output_size, int)
@@ -102,7 +42,7 @@ class PointSampler(object):
         side_a = np.linalg.norm(pt1 - pt2)
         side_b = np.linalg.norm(pt2 - pt3)
         side_c = np.linalg.norm(pt3 - pt1)
-        s = 0.5 * ( side_a + side_b + side_c)
+        s = 0.5 * (side_a + side_b + side_c)
         return max(s * (s - side_a) * (s - side_b) * (s - side_c), 0)**0.5
 
     def sample_point(self, pt1, pt2, pt3):
@@ -137,11 +77,6 @@ class PointSampler(object):
         return sampled_points
 
 
-pointcloud = PointSampler(3000)((verts, faces))
-
-# print(pointcloud)
-
-
 class Normalize(object):
     def __call__(self, pointcloud):
         assert len(pointcloud.shape) == 2
@@ -150,9 +85,6 @@ class Normalize(object):
         norm_pointcloud /= np.max(np.linalg.norm(norm_pointcloud, axis=1))
 
         return norm_pointcloud
-
-
-norm_pointcloud = Normalize()(pointcloud)
 
 
 class RandRotation_z(object):
@@ -176,11 +108,6 @@ class RandomNoise(object):
 
         noisy_pointcloud = pointcloud + noise
         return noisy_pointcloud
-
-
-rot_pointcloud = RandRotation_z()(norm_pointcloud)
-noisy_rot_pointcloud = RandomNoise()(rot_pointcloud)
-# print(noisy_rot_pointcloud)
 
 
 class ToTensor(object):
@@ -233,29 +160,42 @@ class PointCloudData(Dataset):
                 'category': self.classes[category]}
 
 
-train_transforms = transforms.Compose([
+####################
+# data process end #
+
+if __name__ == '__main__':
+    path = os.path.abspath("/home/user/point_transformer/model/pointtransformer/archive/ModelNet40")
+    folders = [dir for dir in sorted(os.listdir(path)) if os.path.isdir(path)]
+    classes = {folder: i for i, folder in enumerate(folders)}
+    with open(path + "/airplane/train/airplane_0001.off", 'r') as f:
+        verts, faces = read_off(f)
+
+    i, j, k = np.array(faces).T
+    x, y, z = np.array(verts).T
+    print(len(x))
+    pointcloud = PointSampler(3000)((verts, faces))
+    norm_pointcloud = Normalize()(pointcloud)
+    rot_pointcloud = RandRotation_z()(norm_pointcloud)
+    noisy_rot_pointcloud = RandomNoise()(rot_pointcloud)
+    train_transforms = transforms.Compose([
                     PointSampler(1024),
                     Normalize(),
                     RandRotation_z(),
                     RandomNoise(),
                     ToTensor()
                     ])
+    train_ds = PointCloudData(path, transform=train_transforms)
+    valid_ds = PointCloudData(path, valid=True, folder='test', transform=train_transforms)
 
-train_ds = PointCloudData(path, transform=train_transforms)
-valid_ds = PointCloudData(path, valid=True, folder='test', transform=train_transforms)
+    print(len(train_ds))
+    print(len(valid_ds))
+    inv_classes = {i: cat for cat, i in train_ds.classes.items()}
+    print(inv_classes)
+    print('Train dataset size: ', len(train_ds))
+    print('Valid dataset size: ', len(valid_ds))
+    print('Number of classes: ', len(train_ds.classes))
+    print('Sample pointcloud shape: ', train_ds[0]['pointcloud'].size())
+    print('Class: ', inv_classes[train_ds[0]['category']])
 
-print(len(train_ds))
-print(len(valid_ds))
-inv_classes = {i: cat for cat, i in train_ds.classes.items()}
-print(inv_classes)
-
-
-print('Train dataset size: ', len(train_ds))
-print('Valid dataset size: ', len(valid_ds))
-print('Number of classes: ', len(train_ds.classes))
-print('Sample pointcloud shape: ', train_ds[0]['pointcloud'].size())
-print('Class: ', inv_classes[train_ds[0]['category']])
-
-
-train_loader = DataLoader(dataset=train_ds, batch_size=32, shuffle=True)
-valid_loader = DataLoader(dataset=valid_ds, batch_size=64)
+    train_loader = DataLoader(dataset=train_ds, batch_size=32, shuffle=True)
+    valid_loader = DataLoader(dataset=valid_ds, batch_size=64)
